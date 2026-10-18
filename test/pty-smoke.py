@@ -31,7 +31,10 @@ parser.add_argument('--vim', action='store_true')
 parser.add_argument('--vim-first', action='store_true')
 parser.add_argument('--compact-labels', action='store_true')
 parser.add_argument('--powerline', action='store_true')
+parser.add_argument('--flush-left', action='store_true')
 args = parser.parse_args()
+if args.flush_left and not args.powerline:
+    parser.error('--flush-left requires --powerline')
 with_vim = args.vim or args.vim_first or args.powerline
 root = pathlib.Path(__file__).resolve().parents[1]
 pi_binary = os.environ.get('PI_BIN') or shutil.which('pi')
@@ -76,6 +79,8 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
             'customItems': [{'id': 'vim', 'statusKey': 'pi-vim-mode', 'position': 'left',
                              'selfColorize': True, 'excludeFromExtensionStatuses': True}]
         }
+        if args.flush_left:
+            settings['powerline']['padding'] = 0
     (agent_dir / 'settings.json').write_text(json.dumps(settings))
     (agent_dir / 'keybindings.json').write_text(json.dumps({'tui.altScreen.lineDown': 'ctrl+alt+down'}))
     env = {**os.environ, 'TERM': 'xterm-256color', 'PI_CODING_AGENT_DIR': str(agent_dir),
@@ -148,6 +153,8 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         assert len(rows) == 1, f'Expected one mode indicator {label!r}: {rows!r}\n{display()}'
         assert '─' not in rows[0], f'Mode still appears in editor border: {rows[0]!r}'
         assert rows[0].strip().startswith(label), f'Mode is not first in Powerline: {rows[0]!r}'
+        if args.flush_left:
+            assert rows[0].startswith(label), f'Mode is not at absolute column zero: {rows[0]!r}'
 
     def ensure_normal():
         def normal():
@@ -239,6 +246,7 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         print(json.dumps({'realPi': True, 'vimMarks': with_vim, 'vimFirst': args.vim_first,
                           'silentSuccess': True, 'leftIndicator': marker, 'shiftG': with_vim,
                           'compactLabels': args.compact_labels, 'powerlineMode': args.powerline,
+                          'flushLeft': args.flush_left,
                           'restoredTopLine': expected_top,
                           'persistedSnapshots': len(saved), 'survivedResize': True,
                           'survivedReload': True, 'modelRequests': 0}, indent=2))
