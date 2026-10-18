@@ -130,6 +130,8 @@ Add `--flush-left` when testing the Powerline fork's `padding: 0`; this also
 asserts the mode block starts at terminal column zero, with one inner space on
 each side of the label.
 
+Add `--subagents` to include the sibling `pi-interactive-subagents` checkout and verify Ctrl+Alt+A, Left on empty INSERT/NORMAL input before/after reload, and cursor movement in nonempty input. This requires zmx on `PATH`; it uses a synthetic parent target and never switches sessions. Subagents loads last, after Vim. For the intentional wrong-order reproduction, add `--subagents-first`: Ctrl+Alt+A succeeds but the Left assertion fails because Vim replaced the decorated editor.
+
 These launch real Pi processes in pseudo-terminals with disposable configuration and synthetic transcripts. They exercise shortcuts or two independent named marks, visible left-padding indicators, insert-mode safety, Shift+G, resizing, `/reload`, and persistence without model requests or personal configuration changes.
 
 - `src/anchors.ts`: content-anchor creation and resolution.

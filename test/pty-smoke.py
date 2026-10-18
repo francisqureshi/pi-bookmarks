@@ -32,6 +32,8 @@ parser.add_argument('--vim-first', action='store_true')
 parser.add_argument('--compact-labels', action='store_true')
 parser.add_argument('--powerline', action='store_true')
 parser.add_argument('--flush-left', action='store_true')
+parser.add_argument('--subagents', action='store_true')
+parser.add_argument('--subagents-first', action='store_true', help='reproduce unsupported order: Vim replaces subagent navigation')
 args = parser.parse_args()
 if args.flush_left and not args.powerline:
     parser.error('--flush-left requires --powerline')
@@ -46,6 +48,9 @@ if with_vim and not vim_path.is_file():
 powerline_path = pathlib.Path(os.environ.get('PI_POWERLINE_EXTENSION', root / 'node_modules/pi-powerline-footer/index.ts'))
 if args.powerline and not powerline_path.is_file():
     raise SystemExit('Set PI_POWERLINE_EXTENSION to the installed Powerline entry point.')
+subagents_path = pathlib.Path(os.environ.get('PI_SUBAGENTS_EXTENSION', root.parent / 'pi-interactive-subagents/pi-extension/subagents/index.ts'))
+if args.subagents and (not subagents_path.is_file() or not shutil.which('zmx')):
+    raise SystemExit('Subagent menu testing requires the extension entry point and zmx on PATH.')
 
 with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
     tmp = pathlib.Path(temporary)
@@ -81,10 +86,15 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         }
         if args.flush_left:
             settings['powerline']['padding'] = 0
+    if args.subagents:
+        settings.setdefault('piVim', {})['clipboardMirror'] = 'never'
     (agent_dir / 'settings.json').write_text(json.dumps(settings))
     (agent_dir / 'keybindings.json').write_text(json.dumps({'tui.altScreen.lineDown': 'ctrl+alt+down'}))
     env = {**os.environ, 'TERM': 'xterm-256color', 'PI_CODING_AGENT_DIR': str(agent_dir),
            'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1', 'PI_TELEMETRY': '0', 'PI_IMAGE_PROTOCOL': 'none'}
+    if args.subagents:
+        env['PI_SUBAGENT_MUX'] = 'zmx'
+        env['PI_SUBAGENT_PARENT_ZMX_SESSION'] = 'smoke-test-parent-never-switched'
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 100, 0, 0))
     screen = pyte.Screen(100, 35)
@@ -95,6 +105,11 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         extensions.insert(0 if args.vim_first else 1, str(vim_path))
     if args.powerline:
         extensions.insert(0, str(powerline_path))
+    if args.subagents:
+        if args.subagents_first:
+            extensions.insert(1 if args.powerline else 0, str(subagents_path))
+        else:
+            extensions.append(str(subagents_path))
     cmd = [pi_binary, '--offline', '--no-extensions', '--no-mcp', '--no-skills',
            '--no-prompt-templates', '--no-context-files', '--no-themes', '--no-approve', '--no-tools',
            '--tui-mode', 'fullscreen', '--provider', 'openai', '--model', 'gpt-4o', '--api-key', 'smoke-test-not-a-real-key',
@@ -168,11 +183,29 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
 
     try:
         wait_for(lambda: 'Message 0099' in display() and 'gpt-4o' in display().lower(), 'startup')
+        if args.subagents:
+            def manager(key, label):
+                send(key)
+                wait_for(lambda: 'ZMX sessions' in display(), label, timeout=4)
+                send(b'\x1b[27u')
+                wait_for(lambda: 'ZMX sessions' not in display(), 'close management menu')
+            manager(b'\x1b[97;7u', 'Ctrl+Alt+A management control')
+            print('Ctrl+Alt+A opens subagent manager', flush=True)
+            manager(b'\x1b[D', 'Left on empty INSERT editor opens subagent manager')
+            if with_vim:
+                ensure_normal()
+                manager(b'\x1b[D', 'Left on empty NORMAL editor opens subagent manager')
+                send(b'i')
+                wait_for(lambda: bool(re.search(r'\bI\b' if args.compact_labels else r'\bINSERT\b', display())), 'restore insert mode')
         if with_vim:
             # Normal-mode integration must not turn these INSERT characters into marks.
             send(b"literal G mq'q")
             wait_for(lambda: "literal G mq'q" in display(), 'literal insert-mode typing')
             assert not snapshots()
+            if args.subagents:
+                send(b'\x1b[DX')
+                wait_for(lambda: "literal G mq'Xq" in display(), 'Left retains cursor movement in nonempty input')
+                assert 'ZMX sessions' not in display()
             assert_powerline_mode('I' if args.compact_labels else 'INSERT')
             ensure_normal()
             if args.compact_labels:
@@ -238,6 +271,12 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         send(b"'q" if with_vim else b'\x1b[106;7u')
         wait_for(lambda: f'Message {message_id}' in top_text(), 'jump after reload')
         assert screen.display[0][0] == marker
+        if args.subagents and with_vim:
+            send(b'ggdG')
+            manager(b'\x1b[D', 'Left after reload opens manager on empty NORMAL input')
+            send(b'i')
+            wait_for(lambda: bool(re.search(r'\bI\b' if args.compact_labels else r'\bINSERT\b', display())), 'insert after reload')
+            manager(b'\x1b[D', 'Left after reload opens manager on empty INSERT input')
         saved = snapshots()
         assert len(saved) == (2 if with_vim else 1)
         assert saved[-1]['version'] == 2
@@ -246,7 +285,7 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         print(json.dumps({'realPi': True, 'vimMarks': with_vim, 'vimFirst': args.vim_first,
                           'silentSuccess': True, 'leftIndicator': marker, 'shiftG': with_vim,
                           'compactLabels': args.compact_labels, 'powerlineMode': args.powerline,
-                          'flushLeft': args.flush_left,
+                          'flushLeft': args.flush_left, 'subagentMenu': args.subagents,
                           'restoredTopLine': expected_top,
                           'persistedSnapshots': len(saved), 'survivedResize': True,
                           'survivedReload': True, 'modelRequests': 0}, indent=2))
