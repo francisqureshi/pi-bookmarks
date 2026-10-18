@@ -1,4 +1,5 @@
 import { TuiAltScreen, sliceByColumn, stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
+import { unmarkedLines } from "./gutter.ts";
 
 export interface TranscriptSnapshot {
   renderer: TuiAltScreen;
@@ -61,5 +62,5 @@ export function readTranscript(tui: TUI | undefined): TranscriptSnapshot {
   if (score < Math.min(3, rendered.length - topRow) || score === 0 || !matchedText) {
     throw new Error("Cannot verify Pi's visible transcript layout; no bookmark navigation was attempted.");
   }
-  return { renderer: tui, lines: rendered.map(stripTerminalSequences), topRow };
+  return { renderer: tui, lines: unmarkedLines(rendered).map(stripTerminalSequences), topRow };
 }

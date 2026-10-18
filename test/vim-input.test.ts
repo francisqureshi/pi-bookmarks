@@ -25,7 +25,8 @@ function setup() {
   editor.setClipboardMirrorPolicy("never");
   const actions: [string, string][] = [];
   let focused: unknown = editor;
-  const input = createVimMarkInput(() => focused, (action, name) => actions.push([action, name]));
+  let endCalls = 0;
+  const input = createVimMarkInput(() => focused, (action, name) => actions.push([action, name]), () => { endCalls++; });
   const send = (data: string) => {
     const result = input.handleInput(data);
     if (!result?.consume) editor.handleInput(data);
@@ -33,7 +34,7 @@ function setup() {
   };
   const type = (text: string) => { for (const key of text) send(key); };
   const normal = () => { send("\x1b"); assert.equal(editor.getMode(), "normal"); };
-  return { host, editor, input, actions, send, type, normal, focus: (next: unknown) => { focused = next; } };
+  return { host, editor, input, actions, send, type, normal, endCalls: () => endCalls, focus: (next: unknown) => { focused = next; } };
 }
 
 test("real pi-vim normal mode accepts two-key named marks without editing", (t) => {
@@ -135,4 +136,35 @@ test("unknown editor shapes fail open without swallowing typing", (t) => {
     assert.equal(h.input.handleInput("q"), undefined);
   }
   assert.deepEqual(h.actions, []);
+});
+
+test("normal-mode Shift+G goes to transcript end without editing the prompt", (t) => {
+  const h = setup(); t.after(h.host.stop);
+  h.editor.setText("untouched prompt"); h.normal();
+  const cursor = h.editor.getCursor();
+  assert.deepEqual(h.send("G"), { consume: true });
+  assert.equal(h.endCalls(), 1);
+  assert.equal(h.editor.getText(), "untouched prompt");
+  assert.deepEqual(h.editor.getCursor(), cursor);
+});
+
+test("capital G remains typing in insert and does not steal visual, EX, or pending commands", (t) => {
+  const h = setup(); t.after(h.host.stop);
+  h.type("G");
+  assert.equal(h.editor.getText(), "G");
+  h.normal(); h.type("vG"); h.send("\x1b");
+  h.type(":someG"); h.send("\x1b");
+  for (const command of ["fG", "rG", "2G", "gG", "dG"]) {
+    h.type(command); h.send("\x1b");
+  }
+  assert.equal(h.endCalls(), 0);
+});
+
+test("Kitty Shift+G variants and captured repeats preserve prompt contents", (t) => {
+  const h = setup(); t.after(h.host.stop);
+  h.editor.setText("prompt"); h.normal();
+  for (const press of ["\x1b[71u", "\x1b[103;2u", "\x1b[103:71;2u"]) h.send(press);
+  h.send("\x1b[103:71;2:2u"); h.send("\x1b[103:71;2:3u");
+  assert.equal(h.endCalls(), 3);
+  assert.equal(h.editor.getText(), "prompt");
 });

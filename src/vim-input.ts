@@ -37,10 +37,11 @@ export function isIdleVimNormal(editor: unknown): editor is object {
   }
 }
 
-/** Exactly two typed keys, never a substring of pasted or batched text. */
+/** Typed Vim transcript commands, never substrings of pasted or batched text. */
 export function createVimMarkInput(
   getEditor: () => unknown,
   perform: (action: VimMarkAction, name: string) => void,
+  goToEnd?: () => void,
 ) {
   let pending: { editor: object; action: VimMarkAction } | undefined;
   let intercepted: { editor: object; keys: Set<string> } | undefined;
@@ -57,7 +58,8 @@ export function createVimMarkInput(
       return;
     }
     if ((pending && pending.editor !== editor) || (intercepted && intercepted.editor !== editor)) reset();
-    const char = decodeKittyPrintable(data) ?? (data.length === 1 ? data : undefined);
+    const char = matchesKey(data, "shift+g") ? "G"
+      : decodeKittyPrintable(data) ?? (data.length === 1 ? data : undefined);
     // A captured key's repeat/release belongs to us too. Forwarding its Kitty
     // sequence can insert text through pi-vim's underlying editor fallback.
     if (isKeyRelease(data)) {
@@ -80,6 +82,11 @@ export function createVimMarkInput(
       // Invalid names and non-text keys cancel our prefix, then retain their
       // usual meaning. In particular, never consume a paste or a control key.
       return;
+    }
+    if (char === "G" && goToEnd) {
+      remember(editor, char);
+      goToEnd();
+      return { consume: true };
     }
     if (char === "m" || char === "'") {
       remember(editor, char);

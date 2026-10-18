@@ -28,6 +28,7 @@ import pyte
 parser = argparse.ArgumentParser()
 parser.add_argument('--vim', action='store_true')
 parser.add_argument('--vim-first', action='store_true')
+parser.add_argument('--compact-labels', action='store_true')
 args = parser.parse_args()
 with_vim = args.vim or args.vim_first
 root = pathlib.Path(__file__).resolve().parents[1]
@@ -58,7 +59,10 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
     fixture.write_text(''.join(json.dumps(entry)+'\n' for entry in entries))
     agent_dir = tmp / 'agent'
     agent_dir.mkdir()
-    (agent_dir / 'settings.json').write_text(json.dumps({'quietStartup': True, 'collapseChangelog': True}))
+    settings = {'quietStartup': True, 'collapseChangelog': True}
+    if args.compact_labels:
+        settings['piVim'] = {'modeLabelStyle': 'compact'}
+    (agent_dir / 'settings.json').write_text(json.dumps(settings))
     (agent_dir / 'keybindings.json').write_text(json.dumps({'tui.altScreen.lineDown': 'ctrl+alt+down'}))
     env = {**os.environ, 'TERM': 'xterm-256color', 'PI_CODING_AGENT_DIR': str(agent_dir),
            'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1', 'PI_TELEMETRY': '0', 'PI_IMAGE_PROTOCOL': 'none'}
@@ -92,7 +96,12 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         os.write(master, data)
 
     def top_text():
-        return screen.display[0][:-1].rstrip()
+        # The first existing padding cell may contain a mark; exclude it from
+        # text comparisons, but assert its displayed value separately.
+        return screen.display[0][1:-1].rstrip()
+
+    def go_end():
+        send(b'G' if with_vim else b'\x1b[1;5F')
 
     def wait_for(predicate, label, timeout=15):
         deadline = time.monotonic()+timeout
@@ -116,18 +125,40 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         raise AssertionError('Could not align a stable message line')
 
     def ensure_normal():
-        if with_vim and 'NORMAL' not in display():
+        def normal():
+            return bool(re.search(r'\bN\b' if args.compact_labels else r'\bNORMAL\b', display()))
+        if with_vim and not normal():
             send(b'\x1b[27u')
-            wait_for(lambda: 'NORMAL' in display(), 'enter Vim normal mode')
+            wait_for(normal, 'enter Vim normal mode')
+        if with_vim and args.compact_labels:
+            assert 'NORMAL' not in display() and 'INSERT' not in display()
 
     try:
         wait_for(lambda: 'Message 0099' in display() and 'gpt-4o' in display(), 'startup')
         if with_vim:
             # Normal-mode integration must not turn these INSERT characters into marks.
-            send(b"literal mq'q")
-            wait_for(lambda: "literal mq'q" in display(), 'literal insert-mode typing')
+            send(b"literal G mq'q")
+            wait_for(lambda: "literal G mq'q" in display(), 'literal insert-mode typing')
             assert not snapshots()
             ensure_normal()
+            if args.compact_labels:
+                send(b'v')
+                wait_for(lambda: bool(re.search(r'\bV\b', display())), 'compact visual label')
+                send(b'\x1b[27u')
+                wait_for(lambda: bool(re.search(r'\bN\b', display())), 'normal after visual')
+                send(b'V')
+                wait_for(lambda: bool(re.search(r'\bVL\b', display())), 'compact visual-line label')
+                send(b'\x1b[27u')
+                wait_for(lambda: bool(re.search(r'\bN\b', display())), 'normal after visual-line')
+                send(b':check')
+                wait_for(lambda: ':check_' in display(), 'compact EX label')
+                assert ' EX ' not in display() and '::check' not in display()
+                send(b'\x1b[27u')
+                wait_for(lambda: bool(re.search(r'\bN\b', display())), 'normal after EX')
+                send(b'2d3f')
+                wait_for(lambda: 'N 2d3f_' in display(), 'compact pending command')
+                send(b'\x1b[27u')
+                wait_for(lambda: 'N 2d3f_' not in display(), 'cancel pending command')
         send(b'\x1b[5~\x1b[5~\x1b[5~')
         wait_for(lambda: 'Message 0099' not in display(), 'scrolling')
         align_message()
@@ -135,6 +166,8 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         message_id = re.search(r'Message (\d{4}):', expected_top).group(1)
         send(b'mq' if with_vim else b'\x1b[98;7u')
         wait_for(lambda: len(snapshots()) == 1, 'silent bookmark save')
+        marker = 'q' if with_vim else '•'
+        wait_for(lambda: screen.display[0][0] == marker, 'left-padding indicator')
         if with_vim:
             send(b'\x1b[5~')
             wait_for(lambda: top_text() != expected_top, 'scroll to second mark')
@@ -142,11 +175,12 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
             second_top = top_text()
             send(b'ma')
             wait_for(lambda: len(snapshots()) == 2, 'save independent named mark')
+            wait_for(lambda: screen.display[0][0] == 'a', 'second left-padding indicator')
             send(b"'q")
             wait_for(lambda: top_text() == expected_top, 'jump between named marks')
             send(b"'a")
             wait_for(lambda: top_text() == second_top, 'jump to second named mark')
-        send(b'\x1b[1;5F')
+        go_end()
         wait_for(lambda: 'Message 0099' in display(), 'return to live output')
         send(b"'q" if with_vim else b'\x1b[106;7u')
         wait_for(lambda: top_text() == expected_top, 'silent jump')
@@ -154,24 +188,26 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         screen.resize(lines=35, columns=61)
         fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 61, 0, 0))
         os.kill(proc.pid, signal.SIGWINCH)
-        send(b'\x1b[1;5F')
+        go_end()
         wait_for(lambda: 'Message 0099' in display(), 'resized live output')
         send(b"'q" if with_vim else b'\x1b[106;7u')
         wait_for(lambda: f'Message {message_id}' in top_text(), 'jump after resize')
-        send(b'\x1b[1;5F')
+        go_end()
         wait_for(lambda: 'Message 0099' in display(), 'live output before reload')
         send(b':reload\r' if with_vim else b'/reload\r')
         wait_for(lambda: 'Reloaded keybindings' in display(), 'real extension reload')
         ensure_normal()
         send(b"'q" if with_vim else b'\x1b[106;7u')
         wait_for(lambda: f'Message {message_id}' in top_text(), 'jump after reload')
+        assert screen.display[0][0] == marker
         saved = snapshots()
         assert len(saved) == (2 if with_vim else 1)
         assert saved[-1]['version'] == 2
         assert set(saved[-1]['marks']) == ({'q', 'a'} if with_vim else {'default'})
         assert sum(entry.get('type') == 'message' for entry in stored()) == 100
         print(json.dumps({'realPi': True, 'vimMarks': with_vim, 'vimFirst': args.vim_first,
-                          'silentSuccess': True, 'restoredTopLine': expected_top,
+                          'silentSuccess': True, 'leftIndicator': marker, 'shiftG': with_vim,
+                          'compactLabels': args.compact_labels, 'restoredTopLine': expected_top,
                           'persistedSnapshots': len(saved), 'survivedResize': True,
                           'survivedReload': True, 'modelRequests': 0}, indent=2))
     finally:

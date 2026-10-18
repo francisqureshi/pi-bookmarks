@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { TuiAltScreen, type TUI } from "@earendil-works/pi-tui";
 import { createAnchor, resolveAnchor, type ContentAnchor } from "./anchors.ts";
 import { isMarkName, restoreMarks, serializeMarks } from "./store.ts";
+import { installGutter } from "./gutter.ts";
 import { readTranscript } from "./transcript.ts";
 import { createVimMarkInput } from "./vim-input.ts";
 
@@ -15,16 +16,19 @@ export default function bookmarks(pi: ExtensionAPI): void {
   let marks = new Map<string, ContentAnchor>();
   let unsubscribe: (() => void) | undefined;
   let resetVimInput: (() => void) | undefined;
+  let removeGutter: (() => void) | undefined;
 
   const restore = (ctx: ExtensionContext) => {
     marks = restoreMarks(ctx.sessionManager.getBranch());
     resetVimInput?.();
+    tui?.requestRender();
   };
 
   const save = (next: Map<string, ContentAnchor>) => {
     // Change local state only after successful persistence.
     pi.appendEntry(STATE_KEY, serializeMarks(next));
     marks = next;
+    tui?.requestRender();
   };
 
   const run = (ctx: ExtensionContext, action: Action, name = "default") => {
@@ -53,7 +57,7 @@ export default function bookmarks(pi: ExtensionAPI): void {
         snapshot.renderer.scrollBy(row - snapshot.renderer.viewportTop);
         snapshot.renderer.renderNow();
       }
-      // Success is intentionally silent: no footer, widget text, or transcript notice.
+      // No footer, widget text, or success notice; only the in-transcript mark.
     } catch (error) {
       if (ctx.hasUI) ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
     }
@@ -64,16 +68,26 @@ export default function bookmarks(pi: ExtensionAPI): void {
     unsubscribe = undefined;
     resetVimInput?.();
     resetVimInput = undefined;
+    removeGutter?.();
+    removeGutter = undefined;
     tui = undefined;
     restore(ctx);
     if (ctx.mode !== "tui") return;
     ctx.ui.setWidget(WIDGET_KEY, (activeTui) => {
       tui = activeTui;
-      return { render: () => [], invalidate: () => {} };
+      const cleanup = installGutter(activeTui, () => marks);
+      removeGutter = cleanup;
+      return { render: () => [], invalidate: () => {}, dispose: cleanup };
     });
     const input = createVimMarkInput(
       () => tui instanceof TuiAltScreen && !tui.hasOverlay() ? tui.getFocusedComponent() : undefined,
       (action, name) => run(ctx, action, name),
+      () => {
+        if (tui instanceof TuiAltScreen) {
+          tui.scrollToBottom();
+          tui.renderNow();
+        }
+      },
     );
     resetVimInput = input.reset;
     unsubscribe = ctx.ui.onTerminalInput(input.handleInput);
@@ -84,6 +98,8 @@ export default function bookmarks(pi: ExtensionAPI): void {
     unsubscribe = undefined;
     resetVimInput?.();
     resetVimInput = undefined;
+    removeGutter?.();
+    removeGutter = undefined;
     if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
     tui = undefined;
     marks = new Map();

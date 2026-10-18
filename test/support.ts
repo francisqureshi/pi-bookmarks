@@ -25,10 +25,10 @@ export class MemoryTerminal implements Terminal {
   setProgramStatus() {}
 }
 
-export function makeHost(options: { scrollbar?: ScrollViewScrollbar; text?: string } = {}) {
+export function makeHost(options: { scrollbar?: ScrollViewScrollbar; text?: string; padding?: number } = {}) {
   const terminal = new MemoryTerminal();
   const tui = new TuiAltScreen(terminal, false, undefined, { mouse: false });
-  const content = new Text(options.text ?? sampleText(), 0, 0);
+  const content = new Text(options.text ?? sampleText(), options.padding ?? 0, 0);
   const document = new Container();
   document.addChild(content);
   const editor = new Text("editor", 0, 0);

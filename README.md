@@ -13,11 +13,11 @@ With [`pi-vim`](https://github.com/lajarre/pi-vim) installed:
 
 These are sequential keystrokes, without spaces. Use any lowercase name **a–z**: `ma` / `'a`, `mb` / `'b`, etc. Saving the same name replaces only that mark. Marks belong to the active session branch.
 
-**There is no bookmark status UI:** no footer, marker, or success notification. Missing or ambiguous content produces a warning instead of a guessed jump.
+**No footer or success notifications.** A saved mark appears in the existing left padding: `q` for mark q, `•` for the unnamed bookmark, or `*` when several marks share a row. It overlays a verified blank cell, so no column is added and wrapping does not change. Lines without blank left padding are left untouched; their bookmarks still work. Missing or ambiguous content produces a warning instead of a guessed jump.
 
 The mark sequences apply only to an idle normal-mode editor. Insert typing, visual selections, EX commands, pending operators/find/replace/counts, and bracketed paste retain their normal behavior. Escape cancels an incomplete mark sequence. Unsupported mark names cancel the prefix and pass that key through normally.
 
-This bookmarks the **transcript**, not a position in your prompt. Pi's **Ctrl+End** returns to live output without deleting marks.
+This bookmarks the **transcript**, not a position in your prompt. **Shift+G (`G`) in idle NORMAL mode** jumps to the transcript end and follows live output, without deleting marks. Capital `G` still types normally in INSERT mode; counted and pending Vim commands keep their existing meaning. Pi's **Ctrl+End** remains an alternative.
 
 ## Without Vim
 
@@ -97,7 +97,7 @@ Prefer completed, stable text: a mark in changing streamed output may stop match
 
 **Transcript layout:** the adapter uses public `TuiAltScreen` scroll methods, but Pi has no dedicated transcript-text API. It relies on Pi 1.3's convention that the first public TUI child is the transcript document. It briefly observes that document's public `render()` method during a synchronous layout render to obtain the actual content width, restores the exact method descriptor in `finally`, and verifies the result against the visible screen. Hidden, auto, and always-visible scrollbars are tested.
 
-**Vim input:** pi-vim exposes `getMode()` but not whether a normal-mode command is pending; EX also reports normal mode. The compatibility adapter therefore makes strictly read-only checks of pi-vim 0.14.2's known pending-state fields before intercepting keys. Missing or unexpected fields disable interception and leave input untouched. It does not replace the editor, modify pi-vim, or depend on package load order. Different editor wrappers or future pi-vim versions may require an adapter update; shortcuts and commands remain alternatives.
+**Vim input:** pi-vim exposes `getMode()` but not whether a normal-mode command is pending; EX also reports normal mode. The compatibility adapter therefore makes strictly read-only checks of pi-vim 0.14.2's known pending-state fields before intercepting keys. Missing or unexpected fields disable interception and leave input untouched. It does not replace the editor, modify pi-vim, or depend on package load order. Different editor wrappers or future pi-vim versions may require an adapter update; shortcuts and commands remain alternatives. The gutter uses an owned document-render wrapper that is removed on shutdown/reload; anchor matching always receives unmarked source lines.
 
 Regular terminal scrollback, RPC, and print mode do not support navigation. Open dialogs must be closed first.
 
@@ -118,10 +118,11 @@ uv run --with pyte python test/pty-smoke.py --vim
 uv run --with pyte python test/pty-smoke.py --vim-first
 ```
 
-These launch real Pi processes in pseudo-terminals with disposable configuration and synthetic transcripts. They exercise shortcuts or two independent named marks, insert-mode safety, resizing, `/reload`, and persistence without model requests or personal configuration changes.
+These launch real Pi processes in pseudo-terminals with disposable configuration and synthetic transcripts. They exercise shortcuts or two independent named marks, visible left-padding indicators, insert-mode safety, Shift+G, resizing, `/reload`, and persistence without model requests or personal configuration changes.
 
 - `src/anchors.ts`: content-anchor creation and resolution.
 - `src/transcript.ts`: fullscreen transcript adapter.
+- `src/gutter.ts`: source-preserving left-padding indicators.
 - `src/store.ts`: branch snapshots and legacy migration.
 - `src/vim-input.ts`: guarded normal-mode mark sequences.
 - `src/index.ts`: commands, shortcuts, and lifecycle wiring.

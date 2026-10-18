@@ -72,31 +72,38 @@ export function createAnchor(lines: readonly string[], topRow: number): ContentA
 }
 
 export function resolveAnchor(lines: readonly string[], anchor: ContentAnchor): number {
-  if (!isContentAnchor(anchor)) throw new Error("Cannot restore bookmark: invalid content anchor.");
+  return createAnchorResolver(lines)(anchor);
+}
+
+/** Share one canonical document index when resolving multiple gutter marks. */
+export function createAnchorResolver(lines: readonly string[]): (anchor: ContentAnchor) => number {
   const { text, starts, parts } = canonicalize(lines);
-  // Both sides must match exactly. Changes to captured context deliberately fail
-  // closed; there is no forward-only or position-based fallback. Text outside
-  // this bounded context can change freely, including newly appended output.
-  const context = anchor.before + anchor.after;
-  const match = text.indexOf(context);
-  if (match < 0) throw new Error("Bookmark content is missing from the current output.");
-  if (text.indexOf(context, match + 1) >= 0) {
-    throw new Error("Bookmark content is ambiguous in the current output.");
-  }
-  const offset = match + anchor.before.length;
-  // At end-of-document there is no containing row: use the end boundary.
-  // Otherwise skip zero-length rows and choose the row containing the offset,
-  // not merely the first row with the same start (which might be blank).
-  let row = lines.length;
-  for (let i = 0; i < starts.length; i++) {
-    if (starts[i]! <= offset && offset < starts[i]! + parts[i]!.length) {
-      row = i;
-      break;
+  return (anchor) => {
+    if (!isContentAnchor(anchor)) throw new Error("Cannot restore bookmark: invalid content anchor.");
+    // Both sides must match exactly. Changes to captured context deliberately fail
+    // closed; there is no forward-only or position-based fallback. Text outside
+    // this bounded context can change freely, including newly appended output.
+    const context = anchor.before + anchor.after;
+    const match = text.indexOf(context);
+    if (match < 0) throw new Error("Bookmark content is missing from the current output.");
+    if (text.indexOf(context, match + 1) >= 0) {
+      throw new Error("Bookmark content is ambiguous in the current output.");
     }
-  }
-  // Preserve preceding blank rows only while they actually exist. Reflow or
-  // tool expansion may remove them; never compensate by landing on other text.
-  let blanks = 0;
-  while (blanks < anchor.blankRows && row - blanks > 0 && parts[row - blanks - 1] === "") blanks++;
-  return row - blanks;
+    const offset = match + anchor.before.length;
+    // At end-of-document there is no containing row: use the end boundary.
+    // Otherwise skip zero-length rows and choose the row containing the offset,
+    // not merely the first row with the same start (which might be blank).
+    let row = lines.length;
+    for (let i = 0; i < starts.length; i++) {
+      if (starts[i]! <= offset && offset < starts[i]! + parts[i]!.length) {
+        row = i;
+        break;
+      }
+    }
+    // Preserve preceding blank rows only while they actually exist. Reflow or
+    // tool expansion may remove them; never compensate by landing on other text.
+    let blanks = 0;
+    while (blanks < anchor.blankRows && row - blanks > 0 && parts[row - blanks - 1] === "") blanks++;
+    return row - blanks;
+  };
 }
