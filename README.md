@@ -118,6 +118,14 @@ uv run --with pyte python test/pty-smoke.py --vim
 uv run --with pyte python test/pty-smoke.py --vim-first
 ```
 
+To also verify the fork's optional Powerline mode label (including no duplicate editor-border label):
+
+```sh
+PI_VIM_EXTENSION=/path/to/pi-vim/index.ts \
+PI_POWERLINE_EXTENSION=/path/to/pi-powerline-footer/index.ts \
+uv run --with pyte python test/pty-smoke.py --powerline --compact-labels
+```
+
 These launch real Pi processes in pseudo-terminals with disposable configuration and synthetic transcripts. They exercise shortcuts or two independent named marks, visible left-padding indicators, insert-mode safety, Shift+G, resizing, `/reload`, and persistence without model requests or personal configuration changes.
 
 - `src/anchors.ts`: content-anchor creation and resolution.

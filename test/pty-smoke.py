@@ -5,7 +5,8 @@ uv run --with pyte python test/pty-smoke.py --vim
 uv run --with pyte python test/pty-smoke.py --vim-first
 
 Requires Pi 1.3 on PATH (or PI_BIN). Vim scenarios use the development pi-vim
-package, or PI_VIM_EXTENSION to select another entry point.
+package, or PI_VIM_EXTENSION to select another entry point. --powerline uses
+PI_POWERLINE_EXTENSION and a fork supporting modeLabelPlacement='status'.
 """
 import argparse
 import codecs
@@ -29,8 +30,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--vim', action='store_true')
 parser.add_argument('--vim-first', action='store_true')
 parser.add_argument('--compact-labels', action='store_true')
+parser.add_argument('--powerline', action='store_true')
 args = parser.parse_args()
-with_vim = args.vim or args.vim_first
+with_vim = args.vim or args.vim_first or args.powerline
 root = pathlib.Path(__file__).resolve().parents[1]
 pi_binary = os.environ.get('PI_BIN') or shutil.which('pi')
 if not pi_binary:
@@ -38,6 +40,9 @@ if not pi_binary:
 vim_path = pathlib.Path(os.environ.get('PI_VIM_EXTENSION', root / 'node_modules/pi-vim/index.ts'))
 if with_vim and not vim_path.is_file():
     raise SystemExit('Run npm install first, or set PI_VIM_EXTENSION.')
+powerline_path = pathlib.Path(os.environ.get('PI_POWERLINE_EXTENSION', root / 'node_modules/pi-powerline-footer/index.ts'))
+if args.powerline and not powerline_path.is_file():
+    raise SystemExit('Set PI_POWERLINE_EXTENSION to the installed Powerline entry point.')
 
 with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
     tmp = pathlib.Path(temporary)
@@ -62,6 +67,15 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
     settings = {'quietStartup': True, 'collapseChangelog': True}
     if args.compact_labels:
         settings['piVim'] = {'modeLabelStyle': 'compact'}
+    if args.powerline:
+        settings.setdefault('piVim', {})['modeLabelPlacement'] = 'status'
+        settings['powerline'] = {
+            'preset': 'default', 'placement': 'below', 'welcome': False, 'separator': 'pipe',
+            'git': {'polling': 'off'},
+            'layout': {'left': ['custom:vim', 'model', 'path'], 'right': [], 'secondary': []},
+            'customItems': [{'id': 'vim', 'statusKey': 'pi-vim-mode', 'position': 'left',
+                             'selfColorize': True, 'excludeFromExtensionStatuses': True}]
+        }
     (agent_dir / 'settings.json').write_text(json.dumps(settings))
     (agent_dir / 'keybindings.json').write_text(json.dumps({'tui.altScreen.lineDown': 'ctrl+alt+down'}))
     env = {**os.environ, 'TERM': 'xterm-256color', 'PI_CODING_AGENT_DIR': str(agent_dir),
@@ -74,6 +88,8 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
     extensions = [str(root / 'src/index.ts')]
     if with_vim:
         extensions.insert(0 if args.vim_first else 1, str(vim_path))
+    if args.powerline:
+        extensions.insert(0, str(powerline_path))
     cmd = [pi_binary, '--offline', '--no-extensions', '--no-mcp', '--no-skills',
            '--no-prompt-templates', '--no-context-files', '--no-themes', '--no-approve', '--no-tools',
            '--tui-mode', 'fullscreen', '--provider', 'openai', '--model', 'gpt-4o', '--api-key', 'smoke-test-not-a-real-key',
@@ -124,6 +140,15 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
             wait_for(lambda: top_text() != previous, 'align top visible message')
         raise AssertionError('Could not align a stable message line')
 
+    def assert_powerline_mode(label):
+        if not args.powerline:
+            return
+        pattern = r'(?<!\w)' + re.escape(label) + r'(?!\w)'
+        rows = [line for line in screen.display if re.search(pattern, line)]
+        assert len(rows) == 1, f'Expected one mode indicator {label!r}: {rows!r}\n{display()}'
+        assert '─' not in rows[0], f'Mode still appears in editor border: {rows[0]!r}'
+        assert rows[0].strip().startswith(label), f'Mode is not first in Powerline: {rows[0]!r}'
+
     def ensure_normal():
         def normal():
             return bool(re.search(r'\bN\b' if args.compact_labels else r'\bNORMAL\b', display()))
@@ -132,31 +157,37 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
             wait_for(normal, 'enter Vim normal mode')
         if with_vim and args.compact_labels:
             assert 'NORMAL' not in display() and 'INSERT' not in display()
+        assert_powerline_mode('N' if args.compact_labels else 'NORMAL')
 
     try:
-        wait_for(lambda: 'Message 0099' in display() and 'gpt-4o' in display(), 'startup')
+        wait_for(lambda: 'Message 0099' in display() and 'gpt-4o' in display().lower(), 'startup')
         if with_vim:
             # Normal-mode integration must not turn these INSERT characters into marks.
             send(b"literal G mq'q")
             wait_for(lambda: "literal G mq'q" in display(), 'literal insert-mode typing')
             assert not snapshots()
+            assert_powerline_mode('I' if args.compact_labels else 'INSERT')
             ensure_normal()
             if args.compact_labels:
                 send(b'v')
                 wait_for(lambda: bool(re.search(r'\bV\b', display())), 'compact visual label')
+                assert_powerline_mode('V')
                 send(b'\x1b[27u')
                 wait_for(lambda: bool(re.search(r'\bN\b', display())), 'normal after visual')
                 send(b'V')
                 wait_for(lambda: bool(re.search(r'\bVL\b', display())), 'compact visual-line label')
+                assert_powerline_mode('VL')
                 send(b'\x1b[27u')
                 wait_for(lambda: bool(re.search(r'\bN\b', display())), 'normal after visual-line')
                 send(b':check')
                 wait_for(lambda: ':check_' in display(), 'compact EX label')
                 assert ' EX ' not in display() and '::check' not in display()
+                assert_powerline_mode(':check_')
                 send(b'\x1b[27u')
                 wait_for(lambda: bool(re.search(r'\bN\b', display())), 'normal after EX')
                 send(b'2d3f')
                 wait_for(lambda: 'N 2d3f_' in display(), 'compact pending command')
+                assert_powerline_mode('N 2d3f_')
                 send(b'\x1b[27u')
                 wait_for(lambda: 'N 2d3f_' not in display(), 'cancel pending command')
         send(b'\x1b[5~\x1b[5~\x1b[5~')
@@ -207,7 +238,8 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         assert sum(entry.get('type') == 'message' for entry in stored()) == 100
         print(json.dumps({'realPi': True, 'vimMarks': with_vim, 'vimFirst': args.vim_first,
                           'silentSuccess': True, 'leftIndicator': marker, 'shiftG': with_vim,
-                          'compactLabels': args.compact_labels, 'restoredTopLine': expected_top,
+                          'compactLabels': args.compact_labels, 'powerlineMode': args.powerline,
+                          'restoredTopLine': expected_top,
                           'persistedSnapshots': len(saved), 'survivedResize': True,
                           'survivedReload': True, 'modelRequests': 0}, indent=2))
     finally:
