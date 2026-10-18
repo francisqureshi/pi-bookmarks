@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix='pi-bookmarks-smoke-') as temporary:
         assert '─' not in rows[0], f'Mode still appears in editor border: {rows[0]!r}'
         assert rows[0].strip().startswith(label), f'Mode is not first in Powerline: {rows[0]!r}'
         if args.flush_left:
-            assert rows[0].startswith(label), f'Mode is not at absolute column zero: {rows[0]!r}'
+            assert rows[0].startswith(' ' + label + ' '), f'Mode block is not flush-left with balanced inner padding: {rows[0]!r}'
 
     def ensure_normal():
         def normal():

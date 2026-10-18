@@ -127,7 +127,8 @@ uv run --with pyte python test/pty-smoke.py --powerline --compact-labels
 ```
 
 Add `--flush-left` when testing the Powerline fork's `padding: 0`; this also
-asserts the Vim indicator is at absolute terminal column zero.
+asserts the mode block starts at terminal column zero, with one inner space on
+each side of the label.
 
 These launch real Pi processes in pseudo-terminals with disposable configuration and synthetic transcripts. They exercise shortcuts or two independent named marks, visible left-padding indicators, insert-mode safety, Shift+G, resizing, `/reload`, and persistence without model requests or personal configuration changes.
 
